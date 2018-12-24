@@ -3,17 +3,38 @@ const isAttribute = name => !isListener(name) && name !== 'children';
 const isTextNode = type => type === 'text';
 const hasNodeValue = props => !!props.nodeValue;
 const isArray = element => element.__proto__.constructor === Array;
+const isFunction = element => element instanceof Function;
+const hasLazyLoad = lazyLoad => lazyLoad && typeof lazyLoad === 'object';
 
 function render(element, parentDOM) {
-    const { type, props } = element;
+    const {
+        type,
+        props,
+        componentWillMount,
+        componentDidMount
+    } = element;
     const childElements = props.children || [];
     const dom = isTextNode(type)
         ? document.createTextNode("")
         : document.createElement(type);
+
+    const lazyLoad = props.lazyLoad;
+    const lazyLoadTriggerEventName = hasLazyLoad(lazyLoad) ? lazyLoad.triggerEventName : '';
+    const triggerEvent = props[lazyLoadTriggerEventName];
+
+    if (lazyLoadTriggerEventName && !triggerEvent)
+        throw new Error(`Cannot find an event set on the element type: '${type}' with name: '${lazyLoadTriggerEventName}' for lazy loading`);
+
+    const wrappedLazyLoadFn = function() {
+        const lazyLoadDomElement = hasLazyLoad(lazyLoad) && lazyLoad.domElement;
+        triggerEvent();
+        render(lazyLoadDomElement, parentDOM);
+    }
     
     Object.keys(props).filter(isListener).forEach((name) => {
         const eventType = name.toLowerCase().substring(2);
-        document.addEventListener(eventType, props[name]);
+        const isLazyLoadEvent = name === lazyLoadTriggerEventName;
+        document.addEventListener(eventType, isLazyLoadEvent ? wrappedLazyLoadFn : props[name]);
     });
 
     Object.keys(props).filter(isAttribute).forEach((attr) => {
@@ -33,8 +54,15 @@ function render(element, parentDOM) {
         `)
 
     }
+
     childElements.forEach(childElement => render(childElement, dom));
+
+    if (componentWillMount && isFunction(componentWillMount)) componentWillMount();
+    element.componentWillMount();
+
     parentDOM.appendChild(dom);
+
+    if (componentDidMount && isFunction(componentDidMount)) componentDidMount();
 }
 
 function DomElement(type, props, value) {
@@ -45,6 +73,8 @@ function DomElement(type, props, value) {
             children: [new TextDomElement(value)]
         });
     }
+    this.componentWillMount = () => {};
+    this.componentDidMount = () => {};
 }
 
 function TextDomElement(nodeValue) {
@@ -82,19 +112,19 @@ function LinkDomElement(value, href) {
 }
 
 window.onload = function() {
-    const elements = {
-        type: 'div',
-        props: {
-            children: [
-                new ParagraphDomElement('hello world'),
-                new ButtonDomElement('Say Hi', {
-                    onClick: () => {
-                        console.log('hello');
-                    }
-                }),
-                new LinkDomElement('Go to Google.com', 'http://www.google.com')
-            ]
-        }
-    };
+    const elements = new DomElement('div', {
+        children: [
+            new ParagraphDomElement('hello world'),
+            new ButtonDomElement('Show Link', {
+                onClick: function() {
+                    console.log('hello');
+                },
+                lazyLoad: {
+                    triggerEventName: 'onClick',
+                    domElement: new LinkDomElement('Go to Google.com', 'http://www.google.com')
+                }
+            })
+        ]
+    });
     render(elements, document.getElementById('root'));
 }
